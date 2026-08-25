@@ -299,8 +299,13 @@
         <div class="sidebar-header">
             <h2>TOEIC Practice</h2>
             <div class="file-upload">
-                <label for="fileInput" style="font-size: 14px; font-weight: 500;">Chọn file JSON bài tập:</label>
-                <input type="file" id="fileInput" accept=".json">
+                <label for="testSelector" style="font-size: 14px; font-weight: 500;">Chọn đề thi:</label>
+                <select id="testSelector" style="padding: 8px; border-radius: 6px; border: 1px solid var(--border); font-size: 14px; background: white; margin-top: 5px;">
+                    <option value="" disabled selected>-- Chọn đề thi --</option>
+                    <option value="data/study4_toeic_test5_results.json">TOEIC Test 5</option>
+                    <option value="data/study4_toeic_test6_results.json">TOEIC Test 6</option>
+                    <option value="data/study4_scraped_results.json">Dữ liệu cào tự do</option>
+                </select>
             </div>
         </div>
         <div class="q-list-container">
@@ -333,8 +338,7 @@
         </div>
         
         <div id="welcomeMessage" style="text-align: center; margin-top: 100px; color: var(--text-muted);">
-            <h2>Vui lòng chọn file JSON để bắt đầu</h2>
-            <p style="margin-top: 10px;">Bạn có thể chọn file study4_toeic_test5_results.json</p>
+            <h2>Vui lòng chọn đề thi ở menu bên trái để bắt đầu</h2>
         </div>
     </div>
 
@@ -357,57 +361,60 @@
             return "Unknown Part";
         }
 
-        document.getElementById('fileInput').addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (!file) return;
+        document.getElementById('testSelector').addEventListener('change', async function(e) {
+            const jsonUrl = e.target.value;
+            if (!jsonUrl) return;
 
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    let parsedQuestions = JSON.parse(e.target.result);
-                    
-                    const seenNumbers = new Set();
-                    questions = [];
-                    parsedQuestions.forEach(q => {
-                        if (!seenNumbers.has(q.number)) {
-                            seenNumbers.add(q.number);
-                            questions.push(q);
-                        }
-                    });
+            try {
+                document.getElementById('welcomeMessage').style.display = 'block';
+                document.getElementById('welcomeMessage').innerHTML = '<h2>Đang tải đề thi...</h2>';
+                document.getElementById('questionCard').style.display = 'none';
+                
+                const response = await fetch(jsonUrl);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const parsedQuestions = await response.json();
+                
+                const seenNumbers = new Set();
+                questions = [];
+                parsedQuestions.forEach(q => {
+                    if (!seenNumbers.has(q.number)) {
+                        seenNumbers.add(q.number);
+                        questions.push(q);
+                    }
+                });
 
-                    questions.sort((a, b) => parseInt(a.number) - parseInt(b.number));
-                    
-                    questionGroups = [];
-                    let currentGroup = null;
-                    let lastCleanContext = null;
-                    
-                    const cleanHtml = (html) => {
-                        if (!html) return "";
-                        return html.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '');
-                    };
+                questions.sort((a, b) => parseInt(a.number) - parseInt(b.number));
+                
+                questionGroups = [];
+                let currentGroup = null;
+                let lastCleanContext = null;
+                
+                const cleanHtml = (html) => {
+                    if (!html) return "";
+                    return html.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '');
+                };
 
-                    questions.forEach(q => {
-                        const cleanCtx = cleanHtml(q.context);
-                        if (!currentGroup || cleanCtx !== lastCleanContext) {
-                            currentGroup = {
-                                context: q.context,
-                                part: getPartFromNumber(q.number),
-                                questions: []
-                            };
-                            questionGroups.push(currentGroup);
-                            lastCleanContext = cleanCtx;
-                        }
-                        q.part = currentGroup.part;
-                        currentGroup.questions.push(q);
-                    });
+                questions.forEach(q => {
+                    const cleanCtx = cleanHtml(q.context);
+                    if (!currentGroup || cleanCtx !== lastCleanContext) {
+                        currentGroup = {
+                            context: q.context,
+                            part: getPartFromNumber(q.number),
+                            questions: []
+                        };
+                        questionGroups.push(currentGroup);
+                        lastCleanContext = cleanCtx;
+                    }
+                    q.part = currentGroup.part;
+                    currentGroup.questions.push(q);
+                });
 
-                    userAnswers = {};
-                    initApp();
-                } catch (error) {
-                    alert("Lỗi khi đọc file JSON: " + error.message);
-                }
-            };
-            reader.readAsText(file);
+                userAnswers = {};
+                initApp();
+            } catch (error) {
+                alert("Lỗi khi tải bài test: " + error.message);
+                document.getElementById('welcomeMessage').innerHTML = '<h2>Lỗi tải file. Vui lòng thử lại!</h2>';
+            }
         });
 
         function initApp() {
