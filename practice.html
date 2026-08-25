@@ -72,6 +72,20 @@
             gap: 8px;
         }
 
+        .part-section {
+            margin-bottom: 20px;
+        }
+        
+        .part-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 5px;
+        }
+
         .q-btn {
             background: var(--surface-color);
             border: 1px solid var(--border);
@@ -290,7 +304,7 @@
             </div>
         </div>
         <div class="q-list-container">
-            <div class="q-grid" id="qGrid">
+            <div id="qGrid">
                 <!-- Question buttons will be generated here -->
             </div>
         </div>
@@ -306,7 +320,7 @@
             </div>
 
             <div class="choices" id="qChoices">
-                <!-- Choices -->
+                <!-- Choices & Questions rendering zone -->
             </div>
 
             <div class="actions">
@@ -315,11 +329,6 @@
                     <button class="btn btn-secondary" onclick="prevQuestion()">Previous</button>
                     <button class="btn btn-secondary" onclick="nextQuestion()">Next</button>
                 </div>
-            </div>
-
-            <div class="explanation" id="qExplanation">
-                <h3>Explanation</h3>
-                <div id="explanationContent"></div>
             </div>
         </div>
         
@@ -331,8 +340,22 @@
 
     <script>
         let questions = [];
-        let currentIndex = 0;
-        let userAnswers = {}; // To store user's choices and status
+        let questionGroups = [];
+        let currentGroupIndex = 0;
+        let userAnswers = {};
+
+        function getPartFromNumber(numStr) {
+            const num = parseInt(numStr, 10);
+            if (isNaN(num)) return "Unknown Part";
+            if (num >= 1 && num <= 6) return "Part 1";
+            if (num >= 7 && num <= 31) return "Part 2";
+            if (num >= 32 && num <= 70) return "Part 3";
+            if (num >= 71 && num <= 100) return "Part 4";
+            if (num >= 101 && num <= 130) return "Part 5";
+            if (num >= 131 && num <= 146) return "Part 6";
+            if (num >= 147 && num <= 200) return "Part 7";
+            return "Unknown Part";
+        }
 
         document.getElementById('fileInput').addEventListener('change', function(e) {
             const file = e.target.files[0];
@@ -341,9 +364,43 @@
             const reader = new FileReader();
             reader.onload = function(e) {
                 try {
-                    questions = JSON.parse(e.target.result);
-                    // Sort questions by number just in case
+                    let parsedQuestions = JSON.parse(e.target.result);
+                    
+                    const seenNumbers = new Set();
+                    questions = [];
+                    parsedQuestions.forEach(q => {
+                        if (!seenNumbers.has(q.number)) {
+                            seenNumbers.add(q.number);
+                            questions.push(q);
+                        }
+                    });
+
                     questions.sort((a, b) => parseInt(a.number) - parseInt(b.number));
+                    
+                    questionGroups = [];
+                    let currentGroup = null;
+                    let lastCleanContext = null;
+                    
+                    const cleanHtml = (html) => {
+                        if (!html) return "";
+                        return html.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '');
+                    };
+
+                    questions.forEach(q => {
+                        const cleanCtx = cleanHtml(q.context);
+                        if (!currentGroup || cleanCtx !== lastCleanContext) {
+                            currentGroup = {
+                                context: q.context,
+                                part: getPartFromNumber(q.number),
+                                questions: []
+                            };
+                            questionGroups.push(currentGroup);
+                            lastCleanContext = cleanCtx;
+                        }
+                        q.part = currentGroup.part;
+                        currentGroup.questions.push(q);
+                    });
+
                     userAnswers = {};
                     initApp();
                 } catch (error) {
@@ -357,51 +414,68 @@
             document.getElementById('welcomeMessage').style.display = 'none';
             document.getElementById('questionCard').style.display = 'block';
             
-            // Build Grid
-            const grid = document.getElementById('qGrid');
-            grid.innerHTML = '';
-            questions.forEach((q, index) => {
-                const btn = document.createElement('button');
-                btn.className = 'q-btn';
-                btn.id = `nav-btn-${index}`;
-                btn.innerText = q.number;
-                btn.onclick = () => goToQuestion(index);
-                grid.appendChild(btn);
+            const container = document.getElementById('qGrid');
+            container.innerHTML = '';
+            
+            let currentPart = null;
+            let currentGrid = null;
+
+            questionGroups.forEach((group, gIndex) => {
+                group.questions.forEach((q) => {
+                    let partName = q.part;
+                    if (partName !== currentPart) {
+                        currentPart = partName;
+                        const section = document.createElement('div');
+                        section.className = 'part-section';
+                        const title = document.createElement('div');
+                        title.className = 'part-title';
+                        title.innerText = partName;
+                        section.appendChild(title);
+                        currentGrid = document.createElement('div');
+                        currentGrid.className = 'q-grid';
+                        section.appendChild(currentGrid);
+                        container.appendChild(section);
+                    }
+                    const btn = document.createElement('button');
+                    btn.className = 'q-btn';
+                    btn.id = `nav-btn-${q.number}`;
+                    btn.innerText = q.number;
+                    btn.onclick = () => goToGroup(gIndex);
+                    currentGrid.appendChild(btn);
+                });
             });
 
-            goToQuestion(0);
+            goToGroup(0);
         }
 
         function getCorrectAnswer(q) {
             if (q.correctAnswer) return q.correctAnswer;
-            // Infer from study4 results structure
             const checkedChoice = q.choices.find(c => c.checked);
             if (q.status === 'correct' && checkedChoice) {
                 return checkedChoice.value;
             }
-            return null; // Might need manual check in explanations for some edge cases
+            return null;
         }
 
-        function goToQuestion(index) {
-            if (index < 0 || index >= questions.length) return;
+        function goToGroup(gIndex) {
+            if (gIndex < 0 || gIndex >= questionGroups.length) return;
+            currentGroupIndex = gIndex;
+            const group = questionGroups[gIndex];
             
-            // Update active state in sidebar
-            const oldActive = document.querySelector('.q-btn.active');
-            if (oldActive) oldActive.classList.remove('active');
-            document.getElementById(`nav-btn-${index}`).classList.add('active');
+            document.querySelectorAll('.q-btn.active').forEach(b => b.classList.remove('active'));
+            group.questions.forEach(q => {
+                const btn = document.getElementById(`nav-btn-${q.number}`);
+                if (btn) btn.classList.add('active');
+            });
 
-            currentIndex = index;
-            const q = questions[index];
-            
-            document.getElementById('qPart').innerText = q.part;
-            document.getElementById('qNumber').innerText = q.number;
+            document.getElementById('qPart').innerText = group.part;
+            const qNumbers = group.questions.map(q => q.number).join(' - ');
+            document.getElementById('qNumber').innerText = qNumbers;
 
-            // Process context HTML
-            let contextHtml = q.context || '';
+            let contextHtml = group.context || '';
             const parser = new DOMParser();
             const doc = parser.parseFromString(contextHtml, 'text/html');
             
-            // Fix study4 media links
             doc.querySelectorAll('img').forEach(img => {
                 if (img.dataset.src) img.src = img.dataset.src;
                 else if (img.getAttribute('src') && img.getAttribute('src').startsWith('/')) {
@@ -414,17 +488,15 @@
                 }
             });
             
-            // Modify collapse elements to work without jQuery/Bootstrap
-            doc.querySelectorAll('[data-toggle="collapse"]').forEach(el => {
+            doc.querySelectorAll('.collapse-toggle, [data-toggle="collapse"]').forEach(el => {
                 el.className = "collapse-toggle";
             });
-            doc.querySelectorAll('.collapse').forEach(el => {
+            doc.querySelectorAll('.collapse-content, .collapse').forEach(el => {
                 el.className = "collapse-content";
             });
 
             document.getElementById('qContext').innerHTML = doc.body.innerHTML;
 
-            // Bind click events to the new collapse toggles
             document.getElementById('qContext').querySelectorAll('.collapse-toggle').forEach(el => {
                 el.addEventListener('click', (e) => {
                     e.preventDefault();
@@ -438,113 +510,145 @@
                 });
             });
 
-            // Reload audio
             document.getElementById('qContext').querySelectorAll('audio').forEach(audio => audio.load());
 
-            // Process Choices
-            const choicesContainer = document.getElementById('qChoices');
-            choicesContainer.innerHTML = '';
+            const questionsContainer = document.getElementById('qChoices');
+            questionsContainer.innerHTML = '';
             
-            const hasCheckedBefore = userAnswers[index] !== undefined;
-
-            q.choices.forEach(c => {
-                // If it's a fill in the blank without choices, handle gracefully? 
-                // Mostly TOEIC has ABCD
-                const label = document.createElement('label');
-                label.className = 'choice-label';
-                label.id = `choice-lbl-${index}-${c.value}`;
+            group.questions.forEach(q => {
+                const qDiv = document.createElement('div');
+                qDiv.className = 'question-block';
+                qDiv.style.marginBottom = '30px';
+                qDiv.style.padding = '20px';
+                qDiv.style.backgroundColor = '#f8fafc';
+                qDiv.style.borderRadius = '8px';
+                qDiv.style.border = '1px solid var(--border)';
                 
-                const input = document.createElement('input');
-                input.type = 'radio';
-                input.name = `q-${q.qid}`;
-                input.value = c.value;
-                
-                if (hasCheckedBefore && userAnswers[index].selected === c.value) {
-                    input.checked = true;
+                if (q.questionText) {
+                    const qText = document.createElement('div');
+                    qText.className = 'question-text';
+                    qText.style.fontWeight = '600';
+                    qText.style.marginBottom = '15px';
+                    qText.innerHTML = `<span style="color:var(--primary)">Câu ${q.number}:</span> ${q.questionText}`;
+                    qDiv.appendChild(qText);
+                } else {
+                    const qText = document.createElement('div');
+                    qText.className = 'question-text';
+                    qText.style.fontWeight = '600';
+                    qText.style.marginBottom = '15px';
+                    qText.innerHTML = `<span style="color:var(--primary)">Câu ${q.number}</span>`;
+                    qDiv.appendChild(qText);
                 }
 
-                label.appendChild(input);
-                label.appendChild(document.createTextNode(c.label || c.value));
-                choicesContainer.appendChild(label);
+                const hasCheckedBefore = userAnswers[q.number] !== undefined;
+                
+                const cDiv = document.createElement('div');
+                cDiv.className = 'choices';
+                cDiv.id = `choices-container-${q.number}`;
+                
+                q.choices.forEach(c => {
+                    const label = document.createElement('label');
+                    label.className = 'choice-label';
+                    label.style.backgroundColor = '#ffffff';
+                    label.id = `choice-lbl-${q.number}-${c.value}`;
+                    
+                    const input = document.createElement('input');
+                    input.type = 'radio';
+                    input.name = `q-${q.qid}`;
+                    input.value = c.value;
+                    
+                    if (hasCheckedBefore && userAnswers[q.number].selected === c.value) {
+                        input.checked = true;
+                    }
+                    if (hasCheckedBefore) input.disabled = true;
+
+                    label.appendChild(input);
+                    label.appendChild(document.createTextNode(c.label || c.value));
+                    cDiv.appendChild(label);
+                });
+                
+                qDiv.appendChild(cDiv);
+                
+                const expDiv = document.createElement('div');
+                expDiv.className = 'explanation';
+                expDiv.id = `exp-${q.number}`;
+                expDiv.style.marginTop = '20px';
+                expDiv.innerHTML = `<h3>Giải thích câu ${q.number}</h3><div>${q.explanation || 'Không có giải thích.'}</div>`;
+                if (hasCheckedBefore) {
+                    expDiv.style.display = 'block';
+                } else {
+                    expDiv.style.display = 'none';
+                }
+                
+                qDiv.appendChild(expDiv);
+                questionsContainer.appendChild(qDiv);
+                
+                if (hasCheckedBefore) {
+                    showFeedbackForQuestion(q);
+                }
             });
 
-            // Reset or show explanation
-            const expDiv = document.getElementById('qExplanation');
-            if (hasCheckedBefore) {
-                showFeedback(index);
-                expDiv.style.display = 'block';
-                document.getElementById('explanationContent').innerHTML = q.explanation || 'Không có giải thích.';
-                document.getElementById('checkBtn').disabled = true;
-            } else {
-                expDiv.style.display = 'none';
-                document.getElementById('checkBtn').disabled = false;
-            }
+            const allAnswered = group.questions.every(q => userAnswers[q.number] !== undefined);
+            document.getElementById('checkBtn').disabled = allAnswered;
         }
 
         function checkAnswer() {
-            const q = questions[currentIndex];
-            const selected = document.querySelector(`input[name="q-${q.qid}"]:checked`);
+            const group = questionGroups[currentGroupIndex];
             
-            if (!selected) {
-                alert("Vui lòng chọn một đáp án!");
-                return;
+            for (let q of group.questions) {
+                const selected = document.querySelector(`input[name="q-${q.qid}"]:checked`);
+                if (!selected) {
+                    alert(`Vui lòng chọn đáp án cho câu ${q.number}!`);
+                    return;
+                }
             }
 
-            const selectedValue = selected.value;
-            let correctValue = getCorrectAnswer(q);
-
-            // Save user answer
-            const isCorrect = (selectedValue === correctValue);
-            userAnswers[currentIndex] = {
-                selected: selectedValue,
-                isCorrect: isCorrect,
-                correct: correctValue
-            };
-
-            showFeedback(currentIndex);
+            for (let q of group.questions) {
+                const selected = document.querySelector(`input[name="q-${q.qid}"]:checked`).value;
+                const correctValue = getCorrectAnswer(q);
+                userAnswers[q.number] = {
+                    selected: selected,
+                    isCorrect: (selected === correctValue),
+                    correct: correctValue
+                };
+                showFeedbackForQuestion(q);
+                document.getElementById(`exp-${q.number}`).style.display = 'block';
+            }
             
-            // Show Explanation
-            const expDiv = document.getElementById('qExplanation');
-            expDiv.style.display = 'block';
-            document.getElementById('explanationContent').innerHTML = q.explanation || 'Không có giải thích.';
-            
-            // Disable check button
             document.getElementById('checkBtn').disabled = true;
         }
 
-        function showFeedback(index) {
-            const answerData = userAnswers[index];
+        function showFeedbackForQuestion(q) {
+            const answerData = userAnswers[q.number];
             if (!answerData) return;
 
-            // Update sidebar button color
-            const navBtn = document.getElementById(`nav-btn-${index}`);
-            navBtn.classList.remove('correct', 'wrong');
-            navBtn.classList.add(answerData.isCorrect ? 'correct' : 'wrong');
+            const navBtn = document.getElementById(`nav-btn-${q.number}`);
+            if (navBtn) {
+                navBtn.classList.remove('correct', 'wrong');
+                navBtn.classList.add(answerData.isCorrect ? 'correct' : 'wrong');
+            }
 
-            // Update choices UI
-            const correctValue = answerData.correct;
-            const selectedValue = answerData.selected;
-
-            const labels = document.getElementById('qChoices').querySelectorAll('.choice-label');
+            const cDiv = document.getElementById(`choices-container-${q.number}`);
+            if (!cDiv) return;
+            const labels = cDiv.querySelectorAll('.choice-label');
             labels.forEach(label => {
                 label.classList.remove('correct', 'wrong');
                 const input = label.querySelector('input');
-                input.disabled = true; // Disable changes after checking
-                
-                if (input.value === correctValue) {
+                input.disabled = true;
+                if (input.value === answerData.correct) {
                     label.classList.add('correct');
-                } else if (input.value === selectedValue && !answerData.isCorrect) {
+                } else if (input.value === answerData.selected && !answerData.isCorrect) {
                     label.classList.add('wrong');
                 }
             });
         }
 
         function nextQuestion() {
-            goToQuestion(currentIndex + 1);
+            goToGroup(currentGroupIndex + 1);
         }
 
         function prevQuestion() {
-            goToQuestion(currentIndex - 1);
+            goToGroup(currentGroupIndex - 1);
         }
     </script>
 </body>
